@@ -67,8 +67,15 @@ static inline bf16_t bf16_add(bf16_t a, bf16_t b)
     }
     if (exp_b == 0xFF)
         return b;
-    if (!exp_a && !mant_a)
-        return b;
+    if (!exp_a && !mant_a) {
+        if (!exp_b && !mant_b) {
+            if (sign_a != sign_b)
+                return BF16_ZERO();
+            else
+                return a;
+        } else
+            return b;
+    }
     if (!exp_b && !mant_b)
         return a;
     if (exp_a)
