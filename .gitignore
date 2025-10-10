@@ -1,2 +1,5 @@
 # VS Code settings
 .vscode/
+
+# Compiled output files
+HW1/output/
