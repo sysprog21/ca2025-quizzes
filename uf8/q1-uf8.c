@@ -86,13 +86,13 @@ static bool test(void)
 
         if (fl != fl2) {
             printf("%02x: produces value %d but encodes back to %02x\n", fl,
-                   value, fl2);
+                value, fl2);
             passed = false;
         }
 
         if (value <= previous_value) {
             printf("%02x: value %d <= previous_value %d\n", fl, value,
-                   previous_value);
+                previous_value);
             passed = false;
         }
 
