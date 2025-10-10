@@ -2,4 +2,6 @@
 .vscode/
 
 # Compiled output files
-HW1/output/
+uf8/output/
+bfloat16/output/
+vector/output/
