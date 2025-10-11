@@ -6,7 +6,7 @@ msg_le:  .string "non-increasing: fl="
 okmsg:   .string "All tests passed."
 
 .text
-
+start:
         j      main
 clz:
         addi    sp,sp,-48
@@ -311,7 +311,7 @@ main:
         beq     a5,zero,L28
 
         la   a0, okmsg
-        li   a7, 4    
+        li   a7, 4
         ecall
 
         li   a0, 10
@@ -327,5 +327,9 @@ L29:
         lw      ra,12(sp)
         lw      s0,8(sp)
         addi    sp,sp,16
-        jr      ra
+        j       Exit
+Exit:
+        li   a7, 10                  # exit syscall in Ripes
+        ecall
+        
         
