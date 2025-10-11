@@ -1,7 +1,6 @@
 .text
 start:
-        j       main
-
+        j      main
 uf8_decode:
 # Register roles:
 #   a0  = argument fl on entry; return value on exit
@@ -55,7 +54,6 @@ uf8_decode:
         lw      s0,40(sp)          # restore s0
         addi    sp,sp,48           # free frame
         jr      ra                 # return
-        
 test_uf8_decode_0x53:
         addi    sp,sp,-32
         sw      ra,28(sp)
@@ -115,7 +113,7 @@ test_uf8_decode_0xff:
         addi    s0,sp,32
         li      a5,-1
         sb      a5,-17(s0)
-        li      a5,1015807
+        li      a5,1015808
         addi    a5,a5,-16
         sw      a5,-24(s0)
         lbu     a5,-17(s0)
@@ -174,7 +172,8 @@ L14:
         lw      ra,28(sp)
         lw      s0,24(sp)
         addi    sp,sp,32
-        j       Exit        # jump to Exit
+        j       Exit
 Exit:
         li   a7, 10                  # exit syscall in Ripes
         ecall
+        
