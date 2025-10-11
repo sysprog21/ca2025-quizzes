@@ -1,234 +1,326 @@
-# RISC-V RV32I assembly translation of q1-uf8.c
-# - No extensions required (no Zbb CLZ); software clz implemented
-# - Uses libc printf for output
-# - ABI: ilp32 (RV32), System V RISC-V psABI
-# CoPilot Generated
+.data
+msg_mis: .string "mismatch: fl="
+msg_val: .string ", val="
+msg_enc: .string ", enc="
+msg_le:  .string "non-increasing: fl="
+okmsg:   .string "All tests passed."
 
-	.text
-	.align 2
-	.globl clz
-	.type clz, @function
-# unsigned clz(uint32_t x)
+.text
+start:
+        j      main
 clz:
-	# Prologue (keep stack 16-byte aligned)
-	addi	sp, sp, -16
-	sw	ra, 12(sp)
-	# a0 = x
-	mv	t0, a0          # t0 = x
-	li	t1, 32          # t1 = n
-	li	t2, 16          # t2 = c
-1:
-	srl	t3, t0, t2     # t3 = y = x >> c
-	beqz	t3, 2f
-	sub	t1, t1, t2     # n -= c
-	mv	t0, t3          # x = y
-2:
-	# c >>= 1
-	srli	t2, t2, 1
-	bnez	t2, 1b
-	sub	a0, t1, t0     # return n - x
-	lw	ra, 12(sp)
-	addi	sp, sp, 16
-	ret
+# a0 -> function arg x on entry; return value on exit.
+# ra -> return address (saved to stack).
+# s0 -> frame pointer.
+# t0 -> x (current working value).
+# t1 -> n.
+# t2 -> c.
+# t3 -> y (temporary, store x >> c).
 
-	.size clz, .-clz
+# initialize stack frame
+        addi    sp,sp,-8          # prologue: make 48B stack frame
+        sw      ra,4(sp)          # save ra
+        sw      s0,0(sp)          # save s0
+        addi    s0,sp,8           # s0 = frame pointer
 
-	.align 2
-	.globl uf8_decode
-	.type uf8_decode, @function
-# uint32_t uf8_decode(uint8_t fl)
+        add     t0,x0,a0,         # x = arg
+        addi    t1,x0,32          # n = 32
+        addi    t2,x0,16          # c = 16
+
+# do { ... } while (c);
+WHILE_LOOP:
+        srl     t3,t0,t2          # y = x >> c
+        beq     t3,x0,SKIP        # if (y) skip if
+        sub     t1,t1,t2          # n -= c;
+        add     t0,x0,t3          # x = y;
+SKIP:
+        srai    t2,t2,1           # c >>= 1;
+        bne     t2,x0,WHILE_LOOP  # while (c) loop
+        sub     a0,t1,t0          # return n - x;
+        lw      ra,4(sp)          # epilogue
+        lw      s0,0(sp)
+        addi    sp,sp,8
+        jr      ra
 uf8_decode:
-	# a0 = fl
-	andi	t0, a0, 0x0f    # mantissa
-	srli	t1, a0, 4       # exponent
-	li	t2, 15
-	sub	t2, t2, t1      # t2 = 15 - exponent
-	li	t3, 0x7fff
-	srl	t3, t3, t2      # 0x7fff >> (15 - exponent)
-	slli	t3, t3, 4       # << 4
-	sll	t4, t0, t1      # mantissa << exponent
-	add	a0, t4, t3      # return value
-	ret
-	.size uf8_decode, .-uf8_decode
+# Register role:
+# a0 = input argument fl on entry; return value on exit
+# s0 = frame pointer (FP)
+# ra = return address
+# t0 = mantissa (holds fl & 0x0f)
+# t1 = exponent (holds fl >> 4)
+# t2 = offset (holds (0x7FFF >> (15 - exponent)) << 4)
+# t3 = 0x7FFF (constant)
+#
+# Stack frame (relative to s0):
+# -48(s0) : reserved ra (save area)
+# -44(s0) : reserved s0 (save area)
+        addi    sp,sp,-8          # prologue: allocate 8B frame
+        sw      ra,4(sp)          # save ra
+        sw      s0,0(sp)          # save s0
+        addi    s0,sp,8           # s0 = sp + 8 (set FP)
 
-	.align 2
-	.globl uf8_encode
-	.type uf8_encode, @function
-# uint8_t uf8_encode(uint32_t value)
+        andi    t0,a0,15           # mantissa = fl & 0x0f
+        srli    t1,a0,4            # exponent = fl >> 4
+
+        li      t2,15              # t2 = 15
+        sub     t2,t2,t1           # t2 = 15 - exponent
+        li      t3,32768           # t3 = 0x8000
+        addi    t3,t3,-1           # t3 = 0x7FFF
+        srl     t2,t3,t2           # t2 = 0x7FFF >> (15 - exponent)
+        slli    t2,t2,4            # offset = t2 = t2 << 4
+
+        sll     a0,t0,t1           # a0 = mantissa << exponent
+        add     a0,a0,t2           # return (mantissa << exponent) + offset
+
+        lw      ra,4(sp)          # epilogue
+        lw      s0,0(sp)          # restore s0
+        addi    sp,sp,8           # free frame
+        jr      ra                 # return
 uf8_encode:
-	addi	sp, sp, -48
-	sw	ra, 44(sp)
-	sw	a0, 0(sp)       # save value
-	# if (value < 16) return value
-	sltiu	t0, a0, 16
-	bnez	t0, .Luf8_small
-	# lz = clz(value)
-	lw	a0, 0(sp)
-	call	clz
-	mv	t1, a0          # t1 = lz
-	# msb = 31 - lz
-	li	t2, 31
-	sub	t2, t2, t1      # t2 = msb
-	# exponent = 0; overflow = 0
-	mv	t3, zero        # t3 = exponent
-	mv	t4, zero        # t4 = overflow
-	# if (msb >= 5)
-	slti	t5, t2, 5       # t5 = (msb < 5)
-	bnez	t5, .Lskip_estimate
-	# exponent = msb - 4
-	addi	t3, t2, -4
-	# if (exponent > 15) exponent = 15
-	sltiu	t6, t3, 16
-	bnez	t6, 3f
-	li	t3, 15
-3:
-	# overflow = 0; for (e=0;e<exponent;e++) overflow = (overflow<<1)+16
-	mv	t6, t3          # t6 = remaining count
-	beqz	t6, 4f
-.Lfor_overflow:
-	slli	t4, t4, 1
-	addi	t4, t4, 16
-	addi	t6, t6, -1
-	bnez	t6, .Lfor_overflow
-4:
-	# while (exponent > 0 && value < overflow) { overflow=(overflow-16)>>1; exponent--; }
-.Ladjust:
-	beqz	t3, .Lafter_adjust
-	lw	t0, 0(sp)       # value
-	bltu	t0, t4, 5f
-	j	.Lafter_adjust
-5:
-	addi	t4, t4, -16
-	srli	t4, t4, 1
-	addi	t3, t3, -1
-	j	.Ladjust
-.Lafter_adjust:
-.Lskip_estimate:
-	# while (exponent < 15)
-.Lwhile_refine:
-	sltiu	t0, t3, 15
-	beqz	t0, .Lafter_refine
-	# next_overflow = (overflow<<1)+16
-	slli	t5, t4, 1
-	addi	t5, t5, 16
-	lw	t0, 0(sp)       # value
-	bltu	t0, t5, .Lafter_refine
-	mv	t4, t5
-	addi	t3, t3, 1
-	j	.Lwhile_refine
-.Lafter_refine:
-	# mantissa = (value - overflow) >> exponent
-	lw	t0, 0(sp)
-	sub	t6, t0, t4
-	srl	t6, t6, t3
-	# return (exponent<<4) | mantissa
-	slli	t3, t3, 4
-	or	a0, t3, t6
-	lw	ra, 44(sp)
-	addi	sp, sp, 48
-	ret
+# register roles:
+#   a0 : uint32_t value (input)
+#   s0 : frame pointer
+#   t0 : input value copy
+#   t1 : msb (most significant bit position)
+#   t2 : exponent
+#   t3 : overflow (offset for current exponent)
+#   t4 : e (temporary for exponent calculation)
+#   t5 : next_overflow (offset for next exponent)
+#   t6 : mantissa
+#   a1 : temporary constant
+# stack frame (from s0, growing down):
+#   -4(s0)  : ra
+#   -8(s0)  : saved s0
+#   -12(s0) : uint32_t value (spill)
 
-.Luf8_small:
-	# return value (already in a0)
-	lw	ra, 44(sp)
-	addi	sp, sp, 48
-	ret
-	.size uf8_encode, .-uf8_encode
+#   initialize stack frame
+        addi    sp,sp,-12
+        sw      ra,8(sp)
+        sw      s0,4(sp)
+        addi    s0,sp,12
 
-	.section .rodata
-	.align 2
-fmt_mismatch:
-	.asciz "%02x: produces value %d but encodes back to %02x\n"
-fmt_nondecr:
-	.asciz "%02x: value %d <= previous_value %d\n"
-msg_all_ok:
-	.asciz "All tests passed.\n"
+#   quick return for value <= 15
+        addi    a1,zero,15        # a1 = 15
+        bgtu    a0,a1,init_exponent_guess  # if (value <= 15) return value
+        j       uf8_encode_return
+init_exponent_guess:
+#   initialize variables for exponent guessing loop
+        sw      a0,0(sp)               # save value across call
+        call    clz                    # call clz(value)
+        li      t1,31                  # t1 = msb = 31
+        lw      t0,0(sp)               # t0 = value
+        sub     t1,t1,a0               # msb = 31 - clz(value)
 
-	.text
-	.align 2
-	.globl test
-	.type test, @function
-# static bool test(void)
+        li      t2,0                    # t2 = exponent = 0
+        li      t3,0                    # t3 = overflow = 0
+
+#   Estimate exponent
+        addi    a1,x0,4                  # a1 = 4
+        ble     t1,a1,find_exact_exponent   # if (msb <= 4) goto find_exact_exponent
+        addi    t2,t1,-4                   # exponent = msb - 4
+#   Handle exponent overflow
+        addi    a1,x0,15                    # a1 = 15
+        bleu    t2,a1,estimate_exponent_and_overflow    # if (exponent <= 15) goto estimate_exponent
+        addi    t2,x0,15                    # exponent = 15
+
+estimate_exponent_and_overflow:
+#   Calculate overflow for current exponent
+        addi    t4,x0,0                   # t4 = e = 0
+
+        j       Loop_condition_1
+
+Loop_1:
+        slli    t3,t3,1                   # overflow <<= 1
+        addi    t3,t3,16                  # overflow += 16
+        addi    t4,t4,1                   # e += 1
+
+Loop_condition_1:
+        bltu    t4,t2,Loop_1
+        
+adjust_e_o:
+#   adjust exponent and overflow
+        beq     t2,x0,find_exact_exponent   # if (exponent == 0) goto find_exact_exponent
+        bge     t0,t3,find_exact_exponent   # if (value >= overflow) go to estimating
+        addi    t3,t3,-16                 # overflow -= 16
+        srli    t3,t3,1                   # overflow >>= 1
+        addi    t2,t2,-1                  # exponent -= 1
+        j       adjust_e_o
+
+find_exact_exponent:
+#   Find exact exponent
+        addi    a1,x0,14                   # a1 = 14
+        bgtu    t2,a1,finalize            # if (exponent > 14) goto finalize
+        slli    t5,t3,1                   # next_overflow = overflow << 1
+        addi    t5,t5,16                  # next_overflow += 16
+        bltu    t0,t5,finalize            # if (value < next_overflow) goto finalize
+        addi    t3,t5,0                   # overflow = next_overflow
+        addi    t2,t2,1                   # exponent += 1
+
+        j       find_exact_exponent
+finalize:
+#   Calculate mantissa
+        sub    t6,t0,t3          # mantissa = value - overflow
+        srl    t6,t6,t2          # mantissa >>= exponent
+        andi   t6,t6,15          # mantissa &= 0x0f
+#   Combine exponent and mantissa
+        slli   t2,t2,4           # exponent <<= 4
+        slli   t2,t2,24
+        srai   t2,t2,24
+        or     a0,t2,t6          # return (exponent << 4) | mantissa
+        slli   a0,a0,24
+        srai   a0,a0,24
+
+uf8_encode_return:
+        lw      ra,8(sp)          # epilogue: restore ra
+        lw      s0,4(sp)          # restore s0
+        addi    sp,sp,12           # free frame
+        jr      ra                 # return
+        
 test:
-	addi	sp, sp, -64
-	sw	ra, 60(sp)
-	# previous_value = -1
-	li	t0, -1
-	sw	t0, 56(sp)
-	# passed = 1
-	li	t0, 1
-	sw	t0, 52(sp)
-	# i = 0
-	mv	t0, zero
-	sw	t0, 48(sp)
-.Lfor_i:
-	lw	t0, 48(sp)
-	li	t1, 256
-	bgeu	t0, t1, .Ldone_loop
-	andi	t2, t0, 0xff    # fl
-	# value = uf8_decode(fl)
-	mv	a0, t2
-	call	uf8_decode
-	mv	t3, a0
-	sw	t3, 44(sp)
-	# fl2 = uf8_encode(value)
-	mv	a0, t3
-	call	uf8_encode
-	andi	t4, a0, 0xff    # fl2
-	# if (fl != fl2)
-	bne	t2, t4, .Lmismatch
-	j	.Lcheck_order
-.Lmismatch:
-	la	a0, fmt_mismatch
-	mv	a1, t2
-	mv	a2, t3
-	mv	a3, t4
-	call	printf
-	sw	zero, 52(sp)   # passed = false
-.Lcheck_order:
-	lw	t3, 44(sp)      # value
-	lw	t6, 56(sp)      # previous_value
-	# if (value <= previous_value)
-	blt	t6, t3, .Lupdate_prev   # if previous < value, skip the error
-	la	a0, fmt_nondecr
-	mv	a1, t2
-	mv	a2, t3
-	mv	a3, t6
-	call	printf
-	sw	zero, 52(sp)
-.Lupdate_prev:
-	sw	t3, 56(sp)      # previous_value = value
-	# i++
-	lw	t0, 48(sp)
-	addi	t0, t0, 1
-	sw	t0, 48(sp)
-	j	.Lfor_i
+        addi    sp,sp,-48
+        sw      ra,44(sp)
+        sw      s0,40(sp)
+        addi    s0,sp,48
+        li      a5,-1
+        sw      a5,-20(s0)
+        li      a5,1
+        sb      a5,-21(s0)
+        sw      zero,-28(s0)
+        j       L22
+L25:
+        lw      a5,-28(s0)
+        sb      a5,-29(s0)
+        lbu     a5,-29(s0)
+        mv      a0,a5
+        call    uf8_decode
+        mv      a5,a0
+        sw      a5,-36(s0)
+        lw      a5,-36(s0)
+        mv      a0,a5
+        call    uf8_encode
+        mv      a5,a0
+        sb      a5,-37(s0)
+        lbu     a4,-29(s0)
+        lbu     a5,-37(s0)
+        beq     a4,a5,L23
+        lbu     a5,-29(s0)
+        lbu     a4,-37(s0)
+        mv      a3,a4
+        lw      a2,-36(s0)
+        mv      a1,a5
+        
+        la   a0, msg_mis      #; a0 = "mismatch: fl="
+        li   a7, 4
+        ecall
 
-.Ldone_loop:
-	lw	a0, 52(sp)      # return passed
-	lw	ra, 60(sp)
-	addi	sp, sp, 64
-	ret
-	.size test, .-test
+        mv   a0, a1           #; fl (original byte)
+        li   a7, 1            #; print integer
+        ecall
 
-	.align 2
-	.globl main
-	.type main, @function
+        la   a0, msg_val
+        li   a7, 4
+        ecall
+
+        mv   a0, a2           #; decoded value
+        li   a7, 1
+        ecall
+
+        la   a0, msg_enc
+        li   a7, 4
+        ecall
+
+        mv   a0, a3           #; re-encoded byte
+        li   a7, 1
+        ecall
+
+        li   a0, 10           #; newline
+        li   a7, 11
+        ecall
+        
+        sb      zero,-21(s0)
+L23:
+        lw      a4,-36(s0)
+        lw      a5,-20(s0)
+        bgt     a4,a5,L24
+        lbu     a5,-29(s0)
+        lw      a3,-20(s0)
+        lw      a2,-36(s0)
+        mv      a1,a5
+        
+        la   a0, msg_le
+        li   a7, 4
+        ecall
+
+        mv   a0, a1           #; fl
+        li   a7, 1
+        ecall
+
+        la   a0, msg_val
+        li   a7, 4
+        ecall
+
+        mv   a0, a2           #; value
+        li   a7, 1
+        ecall
+
+        la   a0, msg_enc      #; reuse label; reads as ", enc=" (or make a ", prev=" string)
+        li   a7, 4
+        ecall
+
+        mv   a0, a3           #; previous_value
+        li   a7, 1
+        ecall    
+
+        li   a0, 10
+        li   a7, 11
+        ecall
+        
+        sb      zero,-21(s0)
+L24:
+        lw      a5,-36(s0)
+        sw      a5,-20(s0)
+        lw      a5,-28(s0)
+        addi    a5,a5,1
+        sw      a5,-28(s0)
+L22:
+        lw      a4,-28(s0)
+        li      a5,255
+        ble     a4,a5,L25
+        lbu     a5,-21(s0)
+        mv      a0,a5
+        lw      ra,44(sp)
+        lw      s0,40(sp)
+        addi    sp,sp,48
+        jr      ra
 main:
-	addi	sp, sp, -16
-	sw	ra, 12(sp)
-	call	test
-	beqz	a0, .Lfail
-	la	a0, msg_all_ok
-	call	printf
-	li	a0, 0
-	j	.Ldone
-.Lfail:
-	li	a0, 1
-.Ldone:
-	lw	ra, 12(sp)
-	addi	sp, sp, 16
-	ret
-	.size main, .-main
+        addi    sp,sp,-16
+        sw      ra,12(sp)
+        sw      s0,8(sp)
+        addi    s0,sp,16
+        call    test
+        mv      a5,a0
+        beq     a5,zero,L28
 
-	.ident "Translated to RISC-V RV32I"
+        la   a0, okmsg
+        li   a7, 4
+        ecall
+
+        li   a0, 10
+        li   a7, 11
+        ecall
+        
+        li      a5,0
+        j       L29
+L28:
+        li      a5,1
+L29:
+        mv      a0,a5
+        lw      ra,12(sp)
+        lw      s0,8(sp)
+        addi    sp,sp,16
+        j       Exit
+Exit:
+        li   a7, 10                  # exit syscall in Ripes
+        ecall
+        
+        
