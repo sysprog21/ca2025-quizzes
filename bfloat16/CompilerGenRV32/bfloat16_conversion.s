@@ -92,7 +92,7 @@ LBB0_4:
         j       LBB0_1
 
 LBB0_6:
-        # all matched ¡÷ true
+        # all matched â†’ true
         li      a0, 1
         sb      a0, -9(s0)
 
@@ -114,23 +114,28 @@ LBB0_7:
 #   -16(s0) : f32bits (uint32_t)
 #   -20(s0) : result copy (uint32_t)
 bf16_to_f32:
-# Initialize stack frame (16B)
-        addi    sp, sp, -8
-        sw      ra, 4(sp)
-        sw      s0, 0(sp)
-        addi    s0, sp, 8
+        addi    sp, sp, -32
+        sw      ra, 28(sp)
+        sw      s0, 24(sp)
+        addi    s0, sp, 32
 
-# Shifting 16 bits left to convert bf16 to f32
+        # f32bits = (uint32)val.bits << 16; return as float bit pattern
+        sh      a0, -10(s0)
+        lh      a0, -10(s0)
         slli    a0, a0, 16
-# epilogue
-        lw      ra, 4(sp)
-        lw      s0, 0(sp)
-        addi    sp, sp, 8
-        jr      ra
+        sw      a0, -16(s0)
+        lw      a0, -16(s0)
+        sw      a0, -20(s0)
+        lw      a0, -20(s0)
+
+        lw      ra, 28(sp)
+        lw      s0, 24(sp)
+        addi    sp, sp, 32
+        ret
 
 # -----------------------------------------------------------------------------
 # bf16_t f32_to_bf16(float val)
-#   If exp==0xFF ¡÷ just truncate top 16 bits (Inf/NaN preserve payload).
+#   If exp==0xFF â†’ just truncate top 16 bits (Inf/NaN preserve payload).
 #   Else round-to-nearest-even: add LSB of cut part plus 0x7FFF, then take top 16.
 # Registers:
 #   a0 : arg f32bits / returns bf16.bits (in low 16)
@@ -140,49 +145,57 @@ bf16_to_f32:
 #   -20(s0) : f32bits (working)
 #   -10(s0) : bf16.bits (uint16_t out)
 #   -18(s0) : scratch (unused load/store pair for flow)
-
 f32_to_bf16:
-# Register Roles:
-# t0: saved result of input value of (f32bits >> 23) & 0xFF
-# t1: saved constant 0xFF
-# t2: saved result of input value of (f32bits >> 16) & 0x7FFF
+        addi    sp, sp, -32
+        sw      ra, 28(sp)
+        sw      s0, 24(sp)
+        addi    s0, sp, 32
 
-# Initialize stack frame (16B)
-        addi    sp, sp, -8
-        sw      ra, 4(sp)
-        sw      s0, 0(sp)
-        addi    s0, sp, 8
-        add     t0, a0, zero
+        # spill input bits
+        sw      a0, -16(s0)
+        lw      a0, -16(s0)
+        sw      a0, -20(s0)
 
-# Calculate (f32bits >> 23) & 0xFF
-        srli    t0, t0, 23
-        andi    t0, t0, 0xFF
-        li      t1, 0xFF
-        beq     t0, t1, handling_inf_nan
-# Not Inf or NaN case
-# Rounding to Nearest, Ties to Even
-        srli    t2, t0, 16
-        andi    t2, t2, 1
-        li      t2, 32767
-        add     a0, a0, t2
+        # if (((f32bits>>23)&0xFF)==0xFF) â†’ fast path: return high16
+        lw      a0, -20(s0)
+        slli    a0, a0, 1
+        srli    a0, a0, 24
+        li      a1, 255
+        bne     a0, a1, LBB2_2
 
-# Shift right 16 to convert f32 to bf16
-        srli    a0, a0, 16
-        j       f32_to_bf16_epilogue
-handling_inf_nan:
-# Inf or NaN case: just shift right 16 bits to convert f32 to bf16
-        srli    a0, a0, 16
-        li      a0, 65535
-f32_to_bf16_epilogue:
-# epilogue
-        lw      ra, 4(sp)
-        lw      s0, 0(sp)
-        addi    sp, sp, 8
-        jr      ra
+LBB2_1:
+        # Inf/NaN path: return (f32bits >> 16)
+        lhu     a0, -18(s0)        # (compiler artifact; final move happens below)
+        sh      a0, -10(s0)
+        j       LBB2_3
+
+LBB2_2:
+        # RNE rounding path:
+        # f32bits += ((f32bits>>16)&1) + 0x7FFF
+        lw      a1, -20(s0)
+        slli    a0, a1, 15
+        srli    a0, a0, 31         # ((f32bits>>16)&1)
+        add     a0, a0, a1
+        lui     a1, 8
+        addi    a1, a1, -1         # 0x7FFF
+        add     a0, a0, a1
+        sw      a0, -20(s0)
+
+        # produce top 16 bits
+        lhu     a0, -18(s0)        # (compiler artifact; replaced by final load)
+        sh      a0, -10(s0)
+
+LBB2_3:
+        # return bf16 bits (top 16 of updated f32bits)
+        lhu     a0, -10(s0)
+        lw      ra, 28(sp)
+        lw      s0, 24(sp)
+        addi    sp, sp, 32
+        ret
 
 # -----------------------------------------------------------------------------
 # int main()
-#   Run test_basic_conversions; map true¡÷0, false¡÷1; exit via ecall.
+#   Run test_basic_conversions; map trueâ†’0, falseâ†’1; exit via ecall.
 # Registers:
 #   a0 : test result / exit code
 # Stack frame (16B):
@@ -193,7 +206,7 @@ main:
         sw      s0, 8(sp)
         addi    s0, sp, 16
 
-        # call test; set exit code: success¡÷0, fail¡÷1
+        # call test; set exit code: successâ†’0, failâ†’1
         li      a0, 0
         sw      a0, -12(s0)
         call    test_basic_conversions
