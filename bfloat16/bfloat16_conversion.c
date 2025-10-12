@@ -13,7 +13,7 @@ static inline bf16_t f32_to_bf16(float val)
     memcpy(&f32bits, &val, sizeof(float));
     if (((f32bits >> 23) & 0xFF) == 0xFF)
         return (bf16_t) {.bits = (f32bits >> 16) & 0xFFFF};
-    f32bits += ((f32bits >> 16) & 1) + 0x7FFF;
+    f32bits += ((f32bits >> 16) & 1) + 0x7FFF;  // For Rounding to Nearest, Ties to Even
     return (bf16_t) {.bits = f32bits >> 16};
 }
 
