@@ -134,6 +134,17 @@ static inline bf16_t bf16_sub(bf16_t a, bf16_t b)
     return bf16_add(a, b);
 }
 
+static inline uint32_t mul16x16_u32(uint16_t x, uint16_t y) {
+    uint32_t r = 0;
+    while (y) {
+        if (y & 1) r += (uint32_t)x;
+        x <<= 1;
+        y >>= 1;
+    }
+    return r;
+}
+
+
 static inline bf16_t bf16_mul(bf16_t a, bf16_t b)
 {
     uint16_t sign_a = (a.bits >> 15) & 1;
@@ -180,7 +191,8 @@ static inline bf16_t bf16_mul(bf16_t a, bf16_t b)
     } else
         mant_b |= 0x80;
 
-    uint32_t result_mant = (uint32_t) mant_a * mant_b;
+    // uint32_t result_mant = (uint32_t) mant_a * mant_b;
+    uint32_t result_mant = mul16x16_u32((uint16_t)mant_a, (uint16_t)mant_b);
 
     int32_t result_exp = (int32_t) exp_a + exp_b - BF16_EXP_BIAS + exp_adjust;
 
@@ -286,69 +298,34 @@ static inline bf16_t bf16_sqrt(bf16_t a)
     int16_t exp = ((a.bits >> 7) & 0xFF);
     uint16_t mant = a.bits & 0x7F;
 
-    /* Handle special cases */
     if (exp == 0xFF) {
-        if (mant)
-            return a; /* NaN propagation */
-        if (sign)
-            return BF16_NAN(); /* sqrt(-Inf) = NaN */
-        return a;              /* sqrt(+Inf) = +Inf */
+        if (mant) return a;           /* NaN */
+        if (sign) return BF16_NAN();  /* sqrt(-Inf) = NaN */
+        return a;                     /* +Inf */
     }
+    if (!exp && !mant) return BF16_ZERO();  /* sqrt(0) = 0 */
+    if (sign) return BF16_NAN();            /* sqrt(negative) = NaN */
+    if (!exp) return BF16_ZERO();           /* flush denormals */
 
-    /* sqrt(0) = 0 (handle both +0 and -0) */
-    if (!exp && !mant)
-        return BF16_ZERO();
-
-    /* sqrt of negative number is NaN */
-    if (sign)
-        return BF16_NAN();
-
-    /* Flush denormals to zero */
-    if (!exp)
-        return BF16_ZERO();
-
-    /* Direct bit manipulation square root algorithm */
-    /* For sqrt: new_exp = (old_exp - bias) / 2 + bias */
     int32_t e = exp - BF16_EXP_BIAS;
     int32_t new_exp;
-    
-    /* Get full mantissa with implicit 1 */
-    uint32_t m = 0x80 | mant;  /* Range [128, 256) representing [1.0, 2.0) */
-    
-    /* Adjust for odd exponents: sqrt(2^odd * m) = 2^((odd-1)/2) * sqrt(2*m) */
+    uint32_t m = 0x80 | mant;
+
     if (e & 1) {
-        m <<= 1;  /* Double mantissa for odd exponent */
+        m <<= 1;
         new_exp = ((e - 1) >> 1) + BF16_EXP_BIAS;
     } else {
         new_exp = (e >> 1) + BF16_EXP_BIAS;
     }
-    
-    /* Now m is in range [128, 256) or [256, 512) if exponent was odd */
-    /* Binary search for integer square root */
-    /* We want result where result^2 = m * 128 (since 128 represents 1.0) */
-    
-    uint32_t low = 90;          /* Min sqrt (roughly sqrt(128)) */
-    uint32_t high = 256;        /* Max sqrt (roughly sqrt(512)) */
-    uint32_t result = 128;      /* Default */
-    
-    /* Binary search for square root of m */
+
+    uint32_t low = 90, high = 256, result = 128;
     while (low <= high) {
         uint32_t mid = (low + high) >> 1;
-        uint32_t sq = (mid * mid) / 128;  /* Square and scale */
-        
-        if (sq <= m) {
-            result = mid;  /* This could be our answer */
-            low = mid + 1;
-        } else {
-            high = mid - 1;
-        }
+        uint32_t sq = mul16x16_u32((uint16_t)mid, (uint16_t)mid) >> 7;
+        if (sq <= m) { result = mid; low = mid + 1; }
+        else { high = mid - 1; }
     }
-    
-    /* result now contains sqrt(m) * sqrt(128) / sqrt(128) = sqrt(m) */
-    /* But we need to adjust the scale */
-    /* Since m is scaled where 128=1.0, result should also be scaled same way */
-    
-    /* Normalize to ensure result is in [128, 256) */
+
     if (result >= 256) {
         result >>= 1;
         new_exp++;
@@ -358,17 +335,16 @@ static inline bf16_t bf16_sqrt(bf16_t a)
             new_exp--;
         }
     }
-    
-    /* Extract 7-bit mantissa (remove implicit 1) */
+
     uint16_t new_mant = result & 0x7F;
-    
-    /* Check for overflow/underflow */
-    if (new_exp >= 0xFF)
-        return (bf16_t) {.bits = 0x7F80};  /* +Inf */
-    if (new_exp <= 0)
-        return BF16_ZERO();
-    
-    return (bf16_t) {.bits = ((new_exp & 0xFF) << 7) | new_mant};
+
+    if (new_exp >= 0xFF) return (bf16_t){ .bits = 0x7F80 }; /* +Inf */
+    if (new_exp <= 0)    return BF16_ZERO();
+
+    /* 正常回傳 */
+    return (bf16_t){
+        .bits = ((uint16_t)0 << 15) | (((uint16_t)new_exp & 0xFF) << 7) | new_mant
+    };
 }
 
 static inline bool bf16_eq(bf16_t a, bf16_t b)
